@@ -6,7 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#12181d">
-<title>Shift B — RU II Dumai</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Shift RU II Dumai</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -23,6 +25,7 @@ html,body{height:100%}
 body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,system-ui,sans-serif;
   max-width:480px;margin:0 auto;padding:env(safe-area-inset-top) 0 calc(24px + env(safe-area-inset-bottom));overflow-x:hidden}
 header{padding:20px 18px 6px;display:flex;align-items:center;justify-content:space-between}
+header h1 b{color:var(--pagi)}
 header h1{font-family:'Barlow Semi Condensed';font-weight:700;font-size:20px;letter-spacing:.04em;text-transform:uppercase}
 header h1 span{color:var(--muted);font-weight:500}
 .hbtns{display:flex;gap:8px}
@@ -115,6 +118,10 @@ header h1 span{color:var(--muted);font-weight:500}
 .btn.save{background:var(--text);color:var(--bg)}
 .btn.del{background:none;border:1px solid var(--line);color:var(--ot)}
 .btn:disabled{opacity:.4;cursor:default}
+#teamBox{display:none;margin:0 14px 12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+#teamBox h4{font:600 13px 'Inter';margin-bottom:10px}
+#teamBox .hint{font-size:11px;color:var(--muted);margin-top:8px}
+#teamBox .chip.onT{background:var(--pagi-dim);color:var(--pagi);border-color:var(--pagi)}
 #editBox{display:none;margin:0 14px 12px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
 #editBox h4{font:600 13px 'Inter';margin-bottom:10px}
 #editBox .alabel{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:8px}
@@ -134,8 +141,9 @@ header h1 span{color:var(--muted);font-weight:500}
 <body>
 
 <header>
-  <h1>Shift B <span>· RU II</span></h1>
+  <h1>Shift <b id="hTeam">B</b> <span>· RU II</span></h1>
   <div class="hbtns">
+    <button class="pill" id="teamBtn">Team B</button>
     <button class="pill" id="editBtn">Ubah</button>
     <button class="pill" id="dataBtn">Data</button>
     <button class="pill" id="todayBtn">Hari ini</button>
@@ -177,6 +185,13 @@ header h1 span{color:var(--muted);font-weight:500}
     <button class="btn del" id="edClose" style="color:var(--muted)">Tutup</button>
   </div>
   <div class="hint" id="edStatus"></div>
+</div>
+
+
+<div id="teamBox">
+  <h4>Pilih team kamu</h4>
+  <div class="chips" id="teamChips"></div>
+  <div class="hint">Kalender, hero, dan adjustment mengikuti team terpilih. Adjustment tersimpan terpisah per team.</div>
 </div>
 
 <section class="hero" id="hero"></section>
@@ -221,6 +236,7 @@ const NAMA = {PAGI:'Pagi', SORE:'Sore', MALAM:'Malam', OFF:'Off', CUTI:'Cuti'};
 const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const HARI = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 const REPL = ['PAGI','SORE','MALAM','OFF','CUTI'];
+const TEAMS = ['A','B','C','D'];
 
 function pos(y,m,d,team){
   const diff = Math.round((Date.UTC(y,m,d)-ANCHOR)/DAY);
@@ -237,27 +253,40 @@ function baseShift(p){
 const key=(y,m,d)=> y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
 
 /* ---------- adjustment store ----------
-   ADJ[date] = { k?: replace-shift, ot?: {from:'08:00',to:'16:00'}, note?: '' }
+   STORE[team][date] = { k?: replace-shift, ot?: {from:'08:00',to:'16:00'}, note?: '' }
    k dan ot independen: bisa hanya OT (shift asli tetap), hanya tukar, atau keduanya. */
-const LS_KEY='shiftB.adjust.v2';
-let memStore={}, persistent=true;
+const LS_KEY='shift.adjust.v3';
+const LS_TEAM='shift.team.v1';
+let memStore={}, memTeam='B', persistent=true;
+function lsOk(){ try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true;}catch(e){return false;} }
+persistent = lsOk();
 function loadStore(){
+  if(!persistent) return memStore;
   try{
-    localStorage.setItem('__t','1'); localStorage.removeItem('__t');
-    const raw=localStorage.getItem(LS_KEY);
-    return raw?JSON.parse(raw):{};
-  }catch(e){ persistent=false; return memStore; }
+    let raw=localStorage.getItem(LS_KEY);
+    if(raw) return JSON.parse(raw);
+    // migrate v2 (flat, Team B) -> v3 (per-team)
+    const old=localStorage.getItem('shiftB.adjust.v2');
+    if(old){ const migrated={B:JSON.parse(old)}; localStorage.setItem(LS_KEY,JSON.stringify(migrated)); return migrated; }
+    return {};
+  }catch(e){ return {}; }
 }
-let ADJ=loadStore();
+let STORE=loadStore();
+let TEAM = persistent ? (localStorage.getItem(LS_TEAM)||'B') : memTeam;
+if(!TEAMS.includes(TEAM)) TEAM='B';
 function saveStore(){
-  if(persistent){ try{localStorage.setItem(LS_KEY,JSON.stringify(ADJ));}catch(e){} }
-  else memStore=ADJ;
+  if(persistent){ try{localStorage.setItem(LS_KEY,JSON.stringify(STORE));}catch(e){} }
+  else memStore=STORE;
 }
+function saveTeam(){ if(persistent){try{localStorage.setItem(LS_TEAM,TEAM);}catch(e){}} else memTeam=TEAM; }
+function ADJget(k){ return (STORE[TEAM]||{})[k]; }
+function ADJset(k,rec){ if(!STORE[TEAM]) STORE[TEAM]={}; STORE[TEAM][k]=rec; saveStore(); }
+function ADJdel(k){ if(STORE[TEAM]){ delete STORE[TEAM][k]; if(!Object.keys(STORE[TEAM]).length) delete STORE[TEAM]; } saveStore(); }
 if(!persistent) document.getElementById('storeWarn').style.display='block';
 
-function dayB(y,m,d){
-  const o=ADJ[key(y,m,d)]||{};
-  const base=baseShift(pos(y,m,d,'B'));
+function dayMe(y,m,d){
+  const o=ADJget(key(y,m,d))||{};
+  const base=baseShift(pos(y,m,d,TEAM));
   const eff = o.k ? {k:o.k,n:0} : base;
   return {eff, base, ov:!!o.k, ot:o.ot||null, note:o.note||''};
 }
@@ -268,15 +297,15 @@ const TY=now.getFullYear(), TM=now.getMonth(), TD=now.getDate();
 let viewY=TY, viewM=TM;
 
 function renderHero(){
-  const p=pos(TY,TM,TD,'B');
-  const D=dayB(TY,TM,TD);
+  const p=pos(TY,TM,TD,TEAM);
+  const D=dayMe(TY,TM,TD);
   const s=D.eff;
   const cvar='var(--'+s.k.toLowerCase()+')';
   const label=(s.k==='OFF')?'OFF':(s.n?NAMA[s.k]+' · hari '+s.n+'/3':NAMA[s.k]);
   const jamLine=(s.k==='OFF'||s.k==='CUTI')?'Tidak ada jadwal':JAM[s.k]+' WIB';
   document.getElementById('hero').innerHTML=`
     <div class="edge" style="background:${cvar}"></div>
-    <div class="label">Shift kamu hari ini${D.ov?' · ADJUSTED':''}</div>
+    <div class="label">Shift Team ${TEAM} hari ini${D.ov?' · ADJUSTED':''}</div>
     <div class="shift" style="color:${cvar}">${label}</div>
     <div class="time">${jamLine}</div>
     <div class="datefull">${HARI[now.getDay()]}, ${TD} ${BULAN[TM]} ${TY}</div>
@@ -301,7 +330,7 @@ function render(){
   let html='';
   for(let i=0;i<lead;i++) html+='<div class="day blank"></div>';
   for(let d=1;d<=nDays;d++){
-    const D=dayB(viewY,viewM,d);
+    const D=dayMe(viewY,viewM,d);
     const s=D.eff;
     const isToday=d===TD&&viewM===TM&&viewY===TY;
     const lbl=s.k==='OFF'?'OFF':(s.n?s.k[0]+s.n:NAMA[s.k].toUpperCase());
@@ -325,7 +354,7 @@ const sheet=document.getElementById('sheet'), ovl=document.getElementById('ovl')
 
 function openSheet(d){
   const dt=new Date(viewY,viewM,d);
-  const D=dayB(viewY,viewM,d);
+  const D=dayMe(viewY,viewM,d);
   document.getElementById('shTitle').textContent=HARI[dt.getDay()]+', '+d+' '+BULAN[viewM]+' '+viewY;
   let sub;
   const s=D.eff;
@@ -336,13 +365,14 @@ function openSheet(d){
   else if(s.k!=='OFF'&&s.k!=='CUTI') sub+='.';
   document.getElementById('shSub').textContent=sub;
 
-  document.getElementById('shRows').innerHTML=['B','A','C','D'].map(t=>{
-    const ts = t==='B'? s : baseShift(pos(viewY,viewM,d,t));
+  const order=[TEAM,...TEAMS.filter(t=>t!==TEAM)];
+  document.getElementById('shRows').innerHTML=order.map(t=>{
+    const ts = t===TEAM? s : baseShift(pos(viewY,viewM,d,t));
     const lbl = ts.k==='OFF'?'OFF':(ts.n?NAMA[ts.k]+' '+ts.n:NAMA[ts.k]);
     return `<div class="trow">
-      <div class="team">TEAM ${t}${t==='B'?'<small>KAMU</small>':''}</div>
+      <div class="team">TEAM ${t}${t===TEAM?'<small>KAMU</small>':''}</div>
       <div class="jam">${(ts.k==='OFF'||ts.k==='CUTI')?'—':JAM[ts.k]}</div>
-      <div class="badge b-${ts.k}">${lbl}${t==='B'&&D.ov?' •':''}</div>
+      <div class="badge b-${ts.k}">${lbl}${t===TEAM&&D.ov?' •':''}</div>
     </div>`;
   }).join('');
   document.getElementById('shOt').innerHTML = D.ot ?
@@ -371,14 +401,14 @@ function renderChips(){
 }
 function loadDateIntoForm(){
   const v=edDate.value; if(!v){renderChips();return;}
-  const o=ADJ[v]||{};
+  const o=ADJget(v)||{};
   selType=o.k||null;
   document.getElementById('otFrom').value=o.ot?o.ot.from:'';
   document.getElementById('otTo').value=o.ot?o.ot.to:'';
   document.getElementById('adjNote').value=o.note||'';
-  document.getElementById('adjDel').disabled=!ADJ[v];
+  document.getElementById('adjDel').disabled=!ADJget(v);
   const [y,m,d]=v.split('-').map(Number);
-  const b=baseShift(pos(y,m-1,d,'B'));
+  const b=baseShift(pos(y,m-1,d,TEAM));
   document.getElementById('edStatus').textContent=
     'Jadwal asli tanggal ini: '+NAMA[b.k]+(b.n?' '+b.n:'')+(b.k==='OFF'?'':' ('+JAM[b.k]+' WIB)');
   renderChips();
@@ -386,7 +416,7 @@ function loadDateIntoForm(){
 document.getElementById('editBtn').onclick=()=>{
   const open=editBox.style.display==='block';
   editBox.style.display=open?'none':'block';
-  dataBox.style.display='none';
+  dataBox.style.display='none'; teamBox.style.display='none';
   if(!open){
     if(!edDate.value) edDate.value=TY+'-'+pad(TM+1)+'-'+pad(TD);
     loadDateIntoForm();
@@ -411,26 +441,48 @@ document.getElementById('adjSave').onclick=()=>{
   if(selType) rec.k=selType;
   if(from&&to) rec.ot={from,to};
   if(note) rec.note=note;
-  if(Object.keys(rec).length===0) delete ADJ[v]; else ADJ[v]=rec;
-  saveStore(); render();
+  if(Object.keys(rec).length===0) ADJdel(v); else ADJset(v,rec);
+  render();
   const [y,m]=v.split('-').map(Number);
   if(y!==viewY||m-1!==viewM){viewY=y;viewM=m-1;render();}
   document.getElementById('edStatus').textContent='Tersimpan ✓';
-  document.getElementById('adjDel').disabled=!ADJ[v];
+  document.getElementById('adjDel').disabled=!ADJget(v);
 };
 document.getElementById('adjDel').onclick=()=>{
   const v=edDate.value; if(!v)return;
-  delete ADJ[v];
-  saveStore(); render(); loadDateIntoForm();
+  ADJdel(v);
+  render(); loadDateIntoForm();
   document.getElementById('edStatus').textContent='Dikembalikan ke jadwal rumus ✓';
 };
+
+
+/* ---------- team selector ---------- */
+const teamBox=document.getElementById('teamBox');
+function syncTeamUI(){
+  document.getElementById('teamBtn').textContent='Team '+TEAM;
+  document.getElementById('hTeam').textContent=TEAM;
+  document.getElementById('teamChips').innerHTML=TEAMS.map(t=>
+    `<button class="chip ${t===TEAM?'onT':''}" data-team="${t}">Team ${t}</button>`).join('');
+}
+document.getElementById('teamBtn').onclick=()=>{
+  const open=teamBox.style.display==='block';
+  teamBox.style.display=open?'none':'block';
+  editBox.style.display='none'; dataBox.style.display='none';
+  syncTeamUI();
+};
+document.getElementById('teamChips').addEventListener('click',e=>{
+  const b=e.target.closest('.chip'); if(!b) return;
+  TEAM=b.dataset.team; saveTeam(); syncTeamUI(); render();
+  if(edDate.value) loadDateIntoForm();
+});
+syncTeamUI();
 
 /* ---------- data export/import ---------- */
 const dataBox=document.getElementById('dataBox'), ta=document.getElementById('dataTa');
 const TIME=/^([01]\d|2[0-3]):[0-5]\d$/;
 document.getElementById('dataBtn').onclick=()=>{
-  editBox.style.display='none';
-  ta.value=JSON.stringify(ADJ,null,1);
+  editBox.style.display='none'; teamBox.style.display='none';
+  ta.value=JSON.stringify(STORE,null,1);
   dataBox.style.display=dataBox.style.display==='block'?'none':'block';
 };
 document.getElementById('closeData').onclick=()=>dataBox.style.display='none';
@@ -442,16 +494,24 @@ document.getElementById('importBtn').onclick=()=>{
   try{
     const obj=JSON.parse(ta.value);
     if(typeof obj!=='object'||Array.isArray(obj)) throw 0;
-    for(const k in obj){
-      const r=obj[k];
-      if(!r||typeof r!=='object') throw 0;
-      if(r.k&&!REPL.includes(r.k)) throw 0;
-      if(r.ot&&!(TIME.test(r.ot.from)&&TIME.test(r.ot.to))) throw 0;
-      if(!r.k&&!r.ot&&!r.note) throw 0;
+    for(const t in obj){
+      if(!TEAMS.includes(t)||typeof obj[t]!=='object'||Array.isArray(obj[t])) throw 0;
+      for(const k in obj[t]){
+        const r=obj[t][k];
+        if(!r||typeof r!=='object') throw 0;
+        if(r.k&&!REPL.includes(r.k)) throw 0;
+        if(r.ot&&!(TIME.test(r.ot.from)&&TIME.test(r.ot.to))) throw 0;
+        if(!r.k&&!r.ot&&!r.note) throw 0;
+      }
     }
-    ADJ=obj; saveStore(); render(); dataBox.style.display='none';
+    STORE=obj; saveStore(); render(); dataBox.style.display='none';
   }catch(e){ ta.value='// Format tidak valid. Tempel JSON hasil backup, lalu Import lagi.\n'+ta.value; }
 };
+
+/* ---------- PWA service worker ---------- */
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
 </script>
 </body>
 </html>
